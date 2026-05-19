@@ -8,14 +8,18 @@ APP_KEY = os.environ.get("KIS_APP_KEY")
 APP_SECRET = os.environ.get("KIS_APP_SECRET")
 BASE_URL = "https://openapi.koreainvestment.com:9443"
 
-# 서버 메모리에 토큰 임시 저장 (잦은 문자 발급 방지)
-cached_token = None
-
 def get_access_token():
-    global cached_token
-    if cached_token:
-        return cached_token
-        
+    """토큰을 /tmp 폴더에 저장하여 잦은 재발급(문자 폭탄) 방지"""
+    token_path = "/tmp/kis_token.txt"
+    
+    # 1. 임시 폴더에 캐싱된 토큰이 있으면 그대로 재사용
+    if os.path.exists(token_path):
+        with open(token_path, "r") as f:
+            saved_token = f.read().strip()
+            if saved_token:
+                return saved_token
+                
+    # 2. 토큰이 없으면 한투 서버에 새로 요청
     url = f"{BASE_URL}/oauth2/tokenP"
     headers = {"content-type": "application/json"}
     body = {
@@ -27,20 +31,23 @@ def get_access_token():
         res = requests.post(url, headers=headers, json=body)
         token = res.json().get("access_token")
         if token:
-            cached_token = token
+            # 새로 발급받은 토큰을 임시 파일로 저장해둠
+            with open(token_path, "w") as f:
+                f.write(token)
         return token
     except:
         return None
 
 @app.route('/api/search', methods=['GET'])
 def search_stock():
+    """개별 종목 실시간 투자자 매수동향 조회"""
     stock_code = request.args.get('code')
     if not stock_code or len(stock_code) != 6:
-        return jsonify({"stock": "입력오류", "foreign": "코드 6자리 필요", "institution": "-", "retail": "-"})
+        return jsonify({"stock": "입력오류", "foreign": "코드 6자리", "institution": "-", "retail": "-"})
 
     token = get_access_token()
     if not token:
-        return jsonify({"stock": stock_code, "foreign": "토큰발급실패", "institution": "Key확인필요", "retail": "-"})
+        return jsonify({"stock": stock_code, "foreign": "토큰오류", "institution": "발급실패", "retail": "-"})
 
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
     headers = {
@@ -59,33 +66,37 @@ def search_stock():
     res = requests.get(url, headers=headers, params=params)
     data = res.json()
     
-    # 한투 서버가 보내온 에러 메시지가 있다면 화면에 표출
     rt_cd = data.get("rt_cd", "1")
-    msg1 = data.get("msg1", "조회 실패")
-    
     if rt_cd != "0":
-        return jsonify({"stock": stock_code, "foreign": f"실패:{msg1}", "institution": "-", "retail": "-"})
+        return jsonify({"stock": stock_code, "foreign": f"조회실패", "institution": data.get("msg1", "-"), "retail": "-"})
         
     try:
-        output = data.get("output", {})
+        output = data.get("output", [])
+        
+        # 데이터가 리스트로 올 경우 가장 최신(0번째) 데이터를 가져오도록 수정
+        if isinstance(output, list) and len(output) > 0:
+            today_data = output[0] 
+        elif isinstance(output, dict):
+            today_data = output
+        else:
+            today_data = {}
+
         return jsonify({
             "stock": stock_code,
-            "foreign": output.get("frgn_ntby_qty", "0"),
-            "institution": output.get("orgn_ntby_qty", "0"),
-            "retail": output.get("prsn_ntby_qty", "0")
+            "foreign": today_data.get("frgn_ntby_qty", "0"),
+            "institution": today_data.get("orgn_ntby_qty", "0"),
+            "retail": today_data.get("prsn_ntby_qty", "0")
         })
     except Exception as e:
         return jsonify({"stock": stock_code, "foreign": "파싱에러", "institution": str(e), "retail": "-"})
 
 @app.route('/api/rank', methods=['GET'])
 def get_ranking():
+    """전일 기준 외국인/기관 순매수 상위 조회"""
     market = request.args.get('market')
     investor = request.args.get('investor')
     
     token = get_access_token()
-    if not token:
-        return jsonify([{"rank": "-", "name": "토큰 발급 실패", "volume": "-"}])
-
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/foreign-institution-total"
     headers = {
         "content-type": "application/json; charset=utf-8",
@@ -116,14 +127,17 @@ def get_ranking():
     data = res.json()
     
     rt_cd = data.get("rt_cd", "1")
-    msg1 = data.get("msg1", "오류")
-    
     if rt_cd != "0":
-        return jsonify([{"rank": "-", "name": f"에러:{msg1}", "volume": "-"}])
+        return jsonify([{"rank": "-", "name": f"API에러: {data.get('msg1', '')}", "volume": "-"}])
         
     result = []
     try:
         items = data.get("output", [])[:10]
+        
+        # 장 시작 전이나 휴일 등 데이터가 비어있을 경우에 대한 처리
+        if not items:
+            return jsonify([{"rank": "-", "name": "조건에 맞는 데이터 없음 (장 미운영 등)", "volume": "-"}])
+            
         for i, item in enumerate(items):
             result.append({
                 "rank": i + 1,
@@ -134,7 +148,7 @@ def get_ranking():
         pass
         
     if not result:
-        result = [{"rank": "-", "name": "데이터가 없습니다.", "volume": "-"}]
+        result = [{"rank": "-", "name": "데이터 파싱 오류", "volume": "-"}]
         
     return jsonify(result)
 
