@@ -73,7 +73,6 @@ def search_stock():
         else:
             today_data = {}
 
-        # 한투 서버가 공백("  ")이나 빈 문자열을 줄 경우 "0"으로 강제 치환하는 로직 추가
         f_val = str(today_data.get("frgn_ntby_qty", "")).strip() or "0"
         i_val = str(today_data.get("orgn_ntby_qty", "")).strip() or "0"
         r_val = str(today_data.get("prsn_ntby_qty", "")).strip() or "0"
@@ -105,7 +104,7 @@ def get_ranking():
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "11480",
-        "FID_INPUT_ISCD": "000000",   # 💡 에러의 원인! 랭킹 조회에도 더미 코드를 무조건 넣어야 합니다.
+        "FID_INPUT_ISCD": "000000",
         "FID_DIV_CLS_CODE": "0",
         "FID_RANK_SORT_CLS_CODE": "0",
         "FID_ETC_CLS_CODE": "0",
@@ -114,8 +113,9 @@ def get_ranking():
         "FID_TARGET_STCK_PRC": "0",
         "FID_TARGET_STCK_VOL": "0",
         "FID_VOL_CNT": "0",
-        "FID_KOSPI_MRKT_CLS_CODE": market,
-        "FID_KOSDAQ_MRKT_CLS_CODE": "0" if market == "0001" else market,
+        # 💡 에러 원인 수정: 코스피와 코스닥 파라미터 변수 분리
+        "FID_KOSPI_MRKT_CLS_CODE": market if market == "0001" else "0",
+        "FID_KOSDAQ_MRKT_CLS_CODE": market if market == "1001" else "0",
         "FID_PRDT_CLS_CODE": investor,
         "FID_TRGET_EXLS_CLS_CODE": "0"
     }
@@ -134,7 +134,6 @@ def get_ranking():
             return jsonify([{"rank": "-", "name": "조건에 맞는 데이터 없음", "volume": "-"}])
             
         for i, item in enumerate(items):
-            # 랭킹 데이터 역시 공백일 경우 "0"으로 처리
             volume_val = str(item.get("ntby_qty", "")).strip() or "0"
             result.append({
                 "rank": i + 1,
