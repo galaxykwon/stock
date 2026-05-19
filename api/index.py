@@ -34,20 +34,23 @@ def get_access_token():
         return None
 
 def resolve_stock_code(query):
-    """한글 종목명을 입력받아 네이버 금융 API를 통해 6자리 코드로 변환"""
+    """네이버 차단을 우회하기 위해 야후 파이낸스 글로벌 검색 API 사용"""
     if query.isdigit() and len(query) == 6:
         return query
     try:
-        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        # 💡 네이버가 Vercel 서버(봇)를 차단하지 않도록 크롬 브라우저 헤더 추가
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        res = requests.get(url, headers=headers, timeout=3)
+        res = requests.get(url, headers=headers, timeout=5)
         data = res.json()
-        items = data.get("items", [])
-        if items and len(items[0]) > 0:
-            return items[0][0][1] # 6자리 종목코드 추출
+        quotes = data.get("quotes", [])
+        
+        # 야후 API 결과에서 한국 주식(.KS 코스피, .KQ 코스닥) 코드 추출
+        for q in quotes:
+            symbol = q.get("symbol", "")
+            if ".KS" in symbol or ".KQ" in symbol:
+                return symbol.split(".")[0]
     except:
         pass
     return None
@@ -159,7 +162,6 @@ def get_ranking():
     try:
         items = data.get("output", [])[:10]
         if not items:
-            # 💡 한투 API 정책상 15:30 이후 데이터가 초기화됨을 명시
             return jsonify([{"rank": "-", "name": "장 마감으로 가집계 초기화 (장중 09:30~15:30 전용)", "volume": "-"}])
             
         for i, item in enumerate(items):
