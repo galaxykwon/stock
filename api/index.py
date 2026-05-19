@@ -9,17 +9,13 @@ APP_SECRET = os.environ.get("KIS_APP_SECRET")
 BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 def get_access_token():
-    """토큰을 /tmp 폴더에 저장하여 잦은 재발급(문자 폭탄) 방지"""
     token_path = "/tmp/kis_token.txt"
-    
-    # 1. 임시 폴더에 캐싱된 토큰이 있으면 그대로 재사용
     if os.path.exists(token_path):
         with open(token_path, "r") as f:
             saved_token = f.read().strip()
             if saved_token:
                 return saved_token
                 
-    # 2. 토큰이 없으면 한투 서버에 새로 요청
     url = f"{BASE_URL}/oauth2/tokenP"
     headers = {"content-type": "application/json"}
     body = {
@@ -31,7 +27,6 @@ def get_access_token():
         res = requests.post(url, headers=headers, json=body)
         token = res.json().get("access_token")
         if token:
-            # 새로 발급받은 토큰을 임시 파일로 저장해둠
             with open(token_path, "w") as f:
                 f.write(token)
         return token
@@ -40,7 +35,6 @@ def get_access_token():
 
 @app.route('/api/search', methods=['GET'])
 def search_stock():
-    """개별 종목 실시간 투자자 매수동향 조회"""
     stock_code = request.args.get('code')
     if not stock_code or len(stock_code) != 6:
         return jsonify({"stock": "입력오류", "foreign": "코드 6자리", "institution": "-", "retail": "-"})
@@ -72,8 +66,6 @@ def search_stock():
         
     try:
         output = data.get("output", [])
-        
-        # 데이터가 리스트로 올 경우 가장 최신(0번째) 데이터를 가져오도록 수정
         if isinstance(output, list) and len(output) > 0:
             today_data = output[0] 
         elif isinstance(output, dict):
@@ -81,18 +73,22 @@ def search_stock():
         else:
             today_data = {}
 
+        # 한투 서버가 공백("  ")이나 빈 문자열을 줄 경우 "0"으로 강제 치환하는 로직 추가
+        f_val = str(today_data.get("frgn_ntby_qty", "")).strip() or "0"
+        i_val = str(today_data.get("orgn_ntby_qty", "")).strip() or "0"
+        r_val = str(today_data.get("prsn_ntby_qty", "")).strip() or "0"
+
         return jsonify({
             "stock": stock_code,
-            "foreign": today_data.get("frgn_ntby_qty", "0"),
-            "institution": today_data.get("orgn_ntby_qty", "0"),
-            "retail": today_data.get("prsn_ntby_qty", "0")
+            "foreign": f_val,
+            "institution": i_val,
+            "retail": r_val
         })
     except Exception as e:
         return jsonify({"stock": stock_code, "foreign": "파싱에러", "institution": str(e), "retail": "-"})
 
 @app.route('/api/rank', methods=['GET'])
 def get_ranking():
-    """전일 기준 외국인/기관 순매수 상위 조회"""
     market = request.args.get('market')
     investor = request.args.get('investor')
     
@@ -109,6 +105,7 @@ def get_ranking():
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "11480",
+        "FID_INPUT_ISCD": "000000",   # 💡 에러의 원인! 랭킹 조회에도 더미 코드를 무조건 넣어야 합니다.
         "FID_DIV_CLS_CODE": "0",
         "FID_RANK_SORT_CLS_CODE": "0",
         "FID_ETC_CLS_CODE": "0",
@@ -133,16 +130,16 @@ def get_ranking():
     result = []
     try:
         items = data.get("output", [])[:10]
-        
-        # 장 시작 전이나 휴일 등 데이터가 비어있을 경우에 대한 처리
         if not items:
-            return jsonify([{"rank": "-", "name": "조건에 맞는 데이터 없음 (장 미운영 등)", "volume": "-"}])
+            return jsonify([{"rank": "-", "name": "조건에 맞는 데이터 없음", "volume": "-"}])
             
         for i, item in enumerate(items):
+            # 랭킹 데이터 역시 공백일 경우 "0"으로 처리
+            volume_val = str(item.get("ntby_qty", "")).strip() or "0"
             result.append({
                 "rank": i + 1,
                 "name": item.get("hts_kor_isnm", "알수없음"),
-                "volume": item.get("ntby_qty", "0")
+                "volume": volume_val
             })
     except:
         pass
