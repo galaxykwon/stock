@@ -33,15 +33,35 @@ def get_access_token():
     except:
         return None
 
+def resolve_stock_code(query):
+    """한글 종목명을 입력받아 네이버 금융 API를 통해 6자리 코드로 변환"""
+    if query.isdigit() and len(query) == 6:
+        return query
+    try:
+        url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
+        res = requests.get(url, timeout=3)
+        data = res.json()
+        items = data.get("items", [])
+        if items and len(items[0]) > 0:
+            return items[0][0][1] # 6자리 종목코드 추출
+    except:
+        pass
+    return None
+
 @app.route('/api/search', methods=['GET'])
 def search_stock():
-    stock_code = request.args.get('code')
-    if not stock_code or len(stock_code) != 6:
-        return jsonify({"stock": "입력오류", "foreign": "코드 6자리", "institution": "-", "retail": "-"})
+    query = request.args.get('code', '').strip()
+    if not query:
+        return jsonify({"stock": "입력오류", "name": "-", "foreign": "-", "institution": "-", "retail": "-"})
+
+    # 종목명 -> 종목코드 변환
+    stock_code = resolve_stock_code(query)
+    if not stock_code:
+        return jsonify({"stock": "검색실패", "name": query, "foreign": "종목을 찾을 수 없음", "institution": "-", "retail": "-"})
 
     token = get_access_token()
     if not token:
-        return jsonify({"stock": stock_code, "foreign": "토큰오류", "institution": "발급실패", "retail": "-"})
+        return jsonify({"stock": stock_code, "name": query, "foreign": "토큰오류", "institution": "발급실패", "retail": "-"})
 
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
     headers = {
@@ -62,7 +82,7 @@ def search_stock():
     
     rt_cd = data.get("rt_cd", "1")
     if rt_cd != "0":
-        return jsonify({"stock": stock_code, "foreign": f"조회실패", "institution": data.get("msg1", "-"), "retail": "-"})
+        return jsonify({"stock": stock_code, "name": query, "foreign": f"조회실패", "institution": data.get("msg1", "-"), "retail": "-"})
         
     try:
         output = data.get("output", [])
@@ -79,12 +99,13 @@ def search_stock():
 
         return jsonify({
             "stock": stock_code,
+            "name": query if not query.isdigit() else stock_code,
             "foreign": f_val,
             "institution": i_val,
             "retail": r_val
         })
     except Exception as e:
-        return jsonify({"stock": stock_code, "foreign": "파싱에러", "institution": str(e), "retail": "-"})
+        return jsonify({"stock": stock_code, "name": query, "foreign": "파싱에러", "institution": str(e), "retail": "-"})
 
 @app.route('/api/rank', methods=['GET'])
 def get_ranking():
@@ -101,10 +122,15 @@ def get_ranking():
         "tr_id": "FHPTJ04400000",
         "custtype": "P"
     }
+    
+    # KIS API 요구사항에 맞게 '1' 또는 '0'으로 완벽히 분리 처리
+    kospi_code = "1" if market == "0001" else "0"
+    kosdaq_code = "1" if market == "1001" else "0"
+    
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "11480",
-        "FID_INPUT_ISCD": "000000",
+        "FID_INPUT_ISCD": "",  # 종목코드 칸을 완전히 비워야 랭킹이 나옴
         "FID_DIV_CLS_CODE": "0",
         "FID_RANK_SORT_CLS_CODE": "0",
         "FID_ETC_CLS_CODE": "0",
@@ -113,9 +139,8 @@ def get_ranking():
         "FID_TARGET_STCK_PRC": "0",
         "FID_TARGET_STCK_VOL": "0",
         "FID_VOL_CNT": "0",
-        # 💡 에러 원인 수정: 코스피와 코스닥 파라미터 변수 분리
-        "FID_KOSPI_MRKT_CLS_CODE": market if market == "0001" else "0",
-        "FID_KOSDAQ_MRKT_CLS_CODE": market if market == "1001" else "0",
+        "FID_KOSPI_MRKT_CLS_CODE": kospi_code,
+        "FID_KOSDAQ_MRKT_CLS_CODE": kosdaq_code,
         "FID_PRDT_CLS_CODE": investor,
         "FID_TRGET_EXLS_CLS_CODE": "0"
     }
@@ -131,7 +156,7 @@ def get_ranking():
     try:
         items = data.get("output", [])[:10]
         if not items:
-            return jsonify([{"rank": "-", "name": "조건에 맞는 데이터 없음", "volume": "-"}])
+            return jsonify([{"rank": "-", "name": "당일 집계된 데이터 없음", "volume": "-"}])
             
         for i, item in enumerate(items):
             volume_val = str(item.get("ntby_qty", "")).strip() or "0"
@@ -144,7 +169,7 @@ def get_ranking():
         pass
         
     if not result:
-        result = [{"rank": "-", "name": "데이터 파싱 오류", "volume": "-"}]
+        return jsonify([{"rank": "-", "name": "데이터 파싱 오류", "volume": "-"}])
         
     return jsonify(result)
 
