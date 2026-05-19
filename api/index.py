@@ -39,7 +39,11 @@ def resolve_stock_code(query):
         return query
     try:
         url = f"https://ac.finance.naver.com/ac?q={query}&q_enc=utf-8&st=111&r_format=json&r_enc=utf-8"
-        res = requests.get(url, timeout=3)
+        # 💡 네이버가 Vercel 서버(봇)를 차단하지 않도록 크롬 브라우저 헤더 추가
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        res = requests.get(url, headers=headers, timeout=3)
         data = res.json()
         items = data.get("items", [])
         if items and len(items[0]) > 0:
@@ -54,7 +58,6 @@ def search_stock():
     if not query:
         return jsonify({"stock": "입력오류", "name": "-", "foreign": "-", "institution": "-", "retail": "-"})
 
-    # 종목명 -> 종목코드 변환
     stock_code = resolve_stock_code(query)
     if not stock_code:
         return jsonify({"stock": "검색실패", "name": query, "foreign": "종목을 찾을 수 없음", "institution": "-", "retail": "-"})
@@ -123,17 +126,17 @@ def get_ranking():
         "custtype": "P"
     }
     
-    # KIS API 요구사항에 맞게 '1' 또는 '0'으로 완벽히 분리 처리
     kospi_code = "1" if market == "0001" else "0"
     kosdaq_code = "1" if market == "1001" else "0"
+    etc_cls = "1" if investor == "9000" else ("2" if investor == "8000" else "0")
     
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "11480",
-        "FID_INPUT_ISCD": "",  # 종목코드 칸을 완전히 비워야 랭킹이 나옴
+        "FID_INPUT_ISCD": "000000",
         "FID_DIV_CLS_CODE": "0",
         "FID_RANK_SORT_CLS_CODE": "0",
-        "FID_ETC_CLS_CODE": "0",
+        "FID_ETC_CLS_CODE": etc_cls,
         "FID_TARGET_CLS_CODE": "0",
         "FID_TARGET_CPT_VAL": "0",
         "FID_TARGET_STCK_PRC": "0",
@@ -156,7 +159,8 @@ def get_ranking():
     try:
         items = data.get("output", [])[:10]
         if not items:
-            return jsonify([{"rank": "-", "name": "당일 집계된 데이터 없음", "volume": "-"}])
+            # 💡 한투 API 정책상 15:30 이후 데이터가 초기화됨을 명시
+            return jsonify([{"rank": "-", "name": "장 마감으로 가집계 초기화 (장중 09:30~15:30 전용)", "volume": "-"}])
             
         for i, item in enumerate(items):
             volume_val = str(item.get("ntby_qty", "")).strip() or "0"
@@ -166,13 +170,9 @@ def get_ranking():
                 "volume": volume_val
             })
     except:
-        pass
-        
-    if not result:
         return jsonify([{"rank": "-", "name": "데이터 파싱 오류", "volume": "-"}])
         
     return jsonify(result)
 
 if __name__ == '__main__':
     app.run()
-
