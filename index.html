@@ -9,7 +9,7 @@
         .container { max-width: 900px; margin: auto; background: #fff; padding: 25px; border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.1); }
         h1, h2 { color: #111; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; font-size: 1.2rem; }
         .search-box { margin-bottom: 30px; }
-        input[type="text"] { padding: 10px; width: 200px; border: 1px solid #bbb; border-radius: 4px; }
+        input[type="text"] { padding: 10px; width: 280px; border: 1px solid #bbb; border-radius: 4px; }
         button { padding: 10px 15px; border: none; background-color: #444; color: white; border-radius: 4px; cursor: pointer; font-weight: bold; }
         button:hover { background-color: #222; }
         .grid-container { display: flex; gap: 20px; }
@@ -24,12 +24,12 @@
     <div class="container">
         <h1>📊 종목별 매수세 검색 (실시간)</h1>
         <div class="search-box">
-            <input type="text" id="stockCode" placeholder="종목코드 6자리 입력">
+            <input type="text" id="stockCode" placeholder="종목명(예: 삼성전자) 또는 코드">
             <button onclick="searchStock()">검색</button>
             <div id="searchResult" class="result-box">대기 중...</div>
         </div>
 
-        <h1>📈 전일 기준 순매수 TOP 10 (09:00 업데이트)</h1>
+        <h1>📈 전일/당일 기준 순매수 TOP 10</h1>
         <div class="grid-container">
             <div class="column">
                 <h2>기관 순매수 상위</h2>
@@ -55,31 +55,40 @@
     <script>
         async function searchStock() {
             const code = document.getElementById('stockCode').value;
-            if(!code) return alert("종목코드를 입력하세요.");
+            if(!code) return alert("종목명이나 코드를 입력하세요.");
             
             document.getElementById('searchResult').innerText = "데이터 불러오는 중...";
-            const res = await fetch(`/api/search?code=${code}`);
-            const data = await res.json();
-            
-            document.getElementById('searchResult').innerHTML = 
-                `<strong>종목코드:</strong> ${data.stock} &nbsp;&nbsp;|&nbsp;&nbsp; 
-                 <strong>외국인:</strong> ${data.foreign} &nbsp;&nbsp;|&nbsp;&nbsp; 
-                 <strong>기관:</strong> ${data.institution} &nbsp;&nbsp;|&nbsp;&nbsp; 
-                 <strong>개인:</strong> ${data.retail}`;
+            try {
+                // 한글 검색어가 깨지지 않도록 인코딩 처리 추가
+                const res = await fetch(`/api/search?code=${encodeURIComponent(code)}`);
+                const data = await res.json();
+                
+                document.getElementById('searchResult').innerHTML = 
+                    `<strong>종목:</strong> ${data.name} (${data.stock}) &nbsp;&nbsp;|&nbsp;&nbsp; 
+                     <strong>외국인:</strong> ${data.foreign} &nbsp;&nbsp;|&nbsp;&nbsp; 
+                     <strong>기관:</strong> ${data.institution} &nbsp;&nbsp;|&nbsp;&nbsp; 
+                     <strong>개인:</strong> ${data.retail}`;
+            } catch (e) {
+                document.getElementById('searchResult').innerText = "검색 중 오류가 발생했습니다.";
+            }
         }
 
         async function loadRank(market, investor) {
             const tbodyId = investor === '8000' ? 'instTable' : 'foreignTable';
             const tbody = document.querySelector(`#${tbodyId} tbody`);
-            tbody.innerHTML = "<tr><td colspan='3'>로딩 중...</td></tr>";
+            tbody.innerHTML = "<tr><td colspan='3'>데이터 불러오는 중...</td></tr>";
 
-            const res = await fetch(`/api/rank?market=${market}&investor=${investor}`);
-            const data = await res.json();
-            
-            tbody.innerHTML = "";
-            data.forEach(item => {
-                tbody.innerHTML += `<tr><td>${item.rank}</td><td>${item.name}</td><td>${item.volume}</td></tr>`;
-            });
+            try {
+                const res = await fetch(`/api/rank?market=${market}&investor=${investor}`);
+                const data = await res.json();
+                
+                tbody.innerHTML = "";
+                data.forEach(item => {
+                    tbody.innerHTML += `<tr><td>${item.rank}</td><td>${item.name}</td><td>${item.volume}</td></tr>`;
+                });
+            } catch (e) {
+                tbody.innerHTML = "<tr><td colspan='3'>순위 데이터를 가져오지 못했습니다.</td></tr>";
+            }
         }
     </script>
 </body>
