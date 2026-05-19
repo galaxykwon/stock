@@ -1,180 +1,26 @@
-from flask import Flask, request, jsonify
-import requests
-import os
-
-app = Flask(__name__)
-
-APP_KEY = os.environ.get("KIS_APP_KEY")
-APP_SECRET = os.environ.get("KIS_APP_SECRET")
-BASE_URL = "https://openapi.koreainvestment.com:9443"
-
-def get_access_token():
-    token_path = "/tmp/kis_token.txt"
-    if os.path.exists(token_path):
-        with open(token_path, "r") as f:
-            saved_token = f.read().strip()
-            if saved_token:
-                return saved_token
-                
-    url = f"{BASE_URL}/oauth2/tokenP"
-    headers = {"content-type": "application/json"}
-    body = {
-        "grant_type": "client_credentials",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET
-    }
-    try:
-        res = requests.post(url, headers=headers, json=body)
-        token = res.json().get("access_token")
-        if token:
-            with open(token_path, "w") as f:
-                f.write(token)
-        return token
-    except:
-        return None
-
 def resolve_stock_code(query):
-    """네이버 차단을 우회하기 위해 야후 파이낸스 글로벌 검색 API 사용"""
+    # 1. 6자리 코드라면 바로 반환
     if query.isdigit() and len(query) == 6:
         return query
+    
+    # 2. 가장 많이 찾는 종목 사전 등록
+    stock_dict = {
+        "삼성전자": "005930", "SK하이닉스": "000660", "LG에너지솔루션": "373220",
+        "삼성바이오로직스": "207940", "현대차": "005380", "셀트리온": "068270",
+        "POSCO홀딩스": "005490", "기아": "000270", "KB금융": "105560", "네이버": "035420"
+    }
+    if query in stock_dict:
+        return stock_dict[query]
+        
+    # 3. 나머지는 기존 야후 API 활용
     try:
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        res = requests.get(url, headers=headers, timeout=5)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=3)
         data = res.json()
-        quotes = data.get("quotes", [])
-        
-        # 야후 API 결과에서 한국 주식(.KS 코스피, .KQ 코스닥) 코드 추출
-        for q in quotes:
-            symbol = q.get("symbol", "")
-            if ".KS" in symbol or ".KQ" in symbol:
-                return symbol.split(".")[0]
+        for q in data.get("quotes", []):
+            if ".KS" in q.get("symbol", "") or ".KQ" in q.get("symbol", ""):
+                return q.get("symbol", "").split(".")[0]
     except:
         pass
     return None
-
-@app.route('/api/search', methods=['GET'])
-def search_stock():
-    query = request.args.get('code', '').strip()
-    if not query:
-        return jsonify({"stock": "입력오류", "name": "-", "foreign": "-", "institution": "-", "retail": "-"})
-
-    stock_code = resolve_stock_code(query)
-    if not stock_code:
-        return jsonify({"stock": "검색실패", "name": query, "foreign": "종목을 찾을 수 없음", "institution": "-", "retail": "-"})
-
-    token = get_access_token()
-    if not token:
-        return jsonify({"stock": stock_code, "name": query, "foreign": "토큰오류", "institution": "발급실패", "retail": "-"})
-
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor"
-    headers = {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
-        "tr_id": "FHKST01010900",
-        "custtype": "P"
-    }
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": stock_code
-    }
-    
-    res = requests.get(url, headers=headers, params=params)
-    data = res.json()
-    
-    rt_cd = data.get("rt_cd", "1")
-    if rt_cd != "0":
-        return jsonify({"stock": stock_code, "name": query, "foreign": f"조회실패", "institution": data.get("msg1", "-"), "retail": "-"})
-        
-    try:
-        output = data.get("output", [])
-        if isinstance(output, list) and len(output) > 0:
-            today_data = output[0] 
-        elif isinstance(output, dict):
-            today_data = output
-        else:
-            today_data = {}
-
-        f_val = str(today_data.get("frgn_ntby_qty", "")).strip() or "0"
-        i_val = str(today_data.get("orgn_ntby_qty", "")).strip() or "0"
-        r_val = str(today_data.get("prsn_ntby_qty", "")).strip() or "0"
-
-        return jsonify({
-            "stock": stock_code,
-            "name": query if not query.isdigit() else stock_code,
-            "foreign": f_val,
-            "institution": i_val,
-            "retail": r_val
-        })
-    except Exception as e:
-        return jsonify({"stock": stock_code, "name": query, "foreign": "파싱에러", "institution": str(e), "retail": "-"})
-
-@app.route('/api/rank', methods=['GET'])
-def get_ranking():
-    market = request.args.get('market')
-    investor = request.args.get('investor')
-    
-    token = get_access_token()
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/foreign-institution-total"
-    headers = {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
-        "tr_id": "FHPTJ04400000",
-        "custtype": "P"
-    }
-    
-    kospi_code = "1" if market == "0001" else "0"
-    kosdaq_code = "1" if market == "1001" else "0"
-    etc_cls = "1" if investor == "9000" else ("2" if investor == "8000" else "0")
-    
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_COND_SCR_DIV_CODE": "11480",
-        "FID_INPUT_ISCD": "000000",
-        "FID_DIV_CLS_CODE": "0",
-        "FID_RANK_SORT_CLS_CODE": "0",
-        "FID_ETC_CLS_CODE": etc_cls,
-        "FID_TARGET_CLS_CODE": "0",
-        "FID_TARGET_CPT_VAL": "0",
-        "FID_TARGET_STCK_PRC": "0",
-        "FID_TARGET_STCK_VOL": "0",
-        "FID_VOL_CNT": "0",
-        "FID_KOSPI_MRKT_CLS_CODE": kospi_code,
-        "FID_KOSDAQ_MRKT_CLS_CODE": kosdaq_code,
-        "FID_PRDT_CLS_CODE": investor,
-        "FID_TRGET_EXLS_CLS_CODE": "0"
-    }
-    
-    res = requests.get(url, headers=headers, params=params)
-    data = res.json()
-    
-    rt_cd = data.get("rt_cd", "1")
-    if rt_cd != "0":
-        return jsonify([{"rank": "-", "name": f"API에러: {data.get('msg1', '')}", "volume": "-"}])
-        
-    result = []
-    try:
-        items = data.get("output", [])[:10]
-        if not items:
-            return jsonify([{"rank": "-", "name": "장 마감으로 가집계 초기화 (장중 09:30~15:30 전용)", "volume": "-"}])
-            
-        for i, item in enumerate(items):
-            volume_val = str(item.get("ntby_qty", "")).strip() or "0"
-            result.append({
-                "rank": i + 1,
-                "name": item.get("hts_kor_isnm", "알수없음"),
-                "volume": volume_val
-            })
-    except:
-        return jsonify([{"rank": "-", "name": "데이터 파싱 오류", "volume": "-"}])
-        
-    return jsonify(result)
-
-if __name__ == '__main__':
-    app.run()
