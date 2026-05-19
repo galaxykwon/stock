@@ -175,3 +175,4 @@ def get_ranking():
 
 if __name__ == '__main__':
     app.run()
+
