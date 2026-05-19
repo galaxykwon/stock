@@ -2,57 +2,43 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>주식 매매동향 대시보드</title>
+    <title>주식 동향</title>
     <style>
-        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; background: #f4f4f4; }
-        .container { max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; }
-        .result-item { margin: 5px; padding: 8px; background: #eee; border: none; cursor: pointer; }
+        body { font-family: sans-serif; padding: 20px; }
+        .box { margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📊 종목별 매수세 검색</h1>
-        <input type="text" id="searchInput" placeholder="종목명 입력" oninput="searchStock()">
+    <div class="box">
+        <h1>📊 종목 검색</h1>
+        <input type="text" id="searchInput" placeholder="종목명 입력">
+        <button onclick="searchStock()">검색</button>
         <div id="results"></div>
-        <div id="data" style="margin-top:20px; font-weight:bold;"></div>
+    </div>
 
-        <hr>
-        <h2>📈 전일 순매수 TOP 10</h2>
-        <button onclick="loadRank('1', '9000')">코스피 외국인</button>
-        <button onclick="loadRank('2', '9000')">코스닥 외국인</button>
+    <div class="box">
+        <h1>📈 전일 순매수 TOP 10</h1>
+        <button onclick="loadRank('1', '9000')">코스피 외인</button>
+        <button onclick="loadRank('2', '9000')">코스닥 외인</button>
         <div id="rankData"></div>
     </div>
 
     <script>
+        // 검색 실행
         async function searchStock() {
             const query = document.getElementById('searchInput').value;
-            if (query.length < 2) return;
-            const res = await fetch(`https://ac.finance.naver.com/ac?q=${query}&st=111&r_format=json`);
+            const res = await fetch(`/api/search?code=${encodeURIComponent(query)}`);
             const data = await res.json();
-            const resDiv = document.getElementById('results');
-            resDiv.innerHTML = '';
-            if (data.items[0]) {
-                data.items[0].forEach(item => {
-                    const btn = document.createElement('button');
-                    btn.className = 'result-item';
-                    btn.innerText = item[0];
-                    btn.onclick = () => getStockData(item[1], item[0]);
-                    resDiv.appendChild(btn);
-                });
-            }
+            document.getElementById('results').innerHTML = 
+                data.frgn_ntby_qty ? `외국인: ${data.frgn_ntby_qty}주 / 기관: ${data.orgn_ntby_qty}주` : "조회 실패";
         }
 
-        async function getStockData(code, name) {
-            const res = await fetch(`/api/search?code=${encodeURIComponent(code)}`);
-            const data = await res.json();
-            document.getElementById('data').innerHTML = `${name}(${code})<br>외국인: ${data.frgn_ntby_qty}주 / 기관: ${data.orgn_ntby_qty}주`;
-        }
-
+        // 순위 조회
         async function loadRank(market, investor) {
             const res = await fetch(`/api/rank?market=${market}&investor=${investor}`);
             const data = await res.json();
-            const rankDiv = document.getElementById('rankData');
-            rankDiv.innerHTML = data.map(item => `<div>${item.hts_kor_isnm}: ${item.ntby_qty}주</div>`).join('');
+            document.getElementById('rankData').innerHTML = 
+                data.map(item => `<div>${item.hts_kor_isnm}: ${item.ntby_qty}주</div>`).join('');
         }
     </script>
 </body>
