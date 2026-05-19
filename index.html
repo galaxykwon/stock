@@ -23,7 +23,7 @@
         }
 
         async function getStockData(code) {
-            const res = await fetch(`/api/search?code=${code}`);
+            const res = await fetch(`/api/search?code=${encodeURIComponent(code)}`);
             const data = await res.json();
             document.getElementById('data').innerHTML = `외인: ${data.frgn_ntby_qty} / 기관: ${data.orgn_ntby_qty}`;
         }
